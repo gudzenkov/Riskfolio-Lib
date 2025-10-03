@@ -84,8 +84,10 @@ class Portfolio(object):
         Gross exposure constraint (sum of absolute values of all positions).
         When set with sht=True, enforces EQUALITY: gross exposure must equal
         budgetcap, while net exposure becomes free for the optimizer to determine.
-        Implemented using auxiliary variables to represent absolute values while
-        maintaining DCP compliance. The default is None.
+        Implemented using split variables with MIP (Mixed-Integer Programming)
+        complementarity constraints to ensure exact gross exposure matching.
+        Requires SCIP solver: install with `pip install pyscipopt`.
+        Note: MIP solving is ~5x slower than pure LP/QP. The default is None.
     nea : int, optional
         Indicate the minimum number of effective assets (NEA) used in
         portfolio. This value is the inverse of Herfindahl-Hirschman index of
@@ -1769,12 +1771,17 @@ class Portfolio(object):
         T, N = returns.shape
         onesvec = np.ones((T, 1))
 
-        w = cp.Variable((N, 1))
-        k = cp.Variable((1, 1))
-
-        # Auxiliary variables for gross exposure (absolute value) constraint
+        # Split variable formulation for budgetcap equality constraint
         if self.budgetcap is not None and self.sht == True:
-            w_abs = cp.Variable((N, 1), nonneg=True)  # w_abs[i] >= |w[i]|
+            w_long = cp.Variable((N, 1), nonneg=True)
+            w_short = cp.Variable((N, 1), nonneg=True)
+            w = w_long - w_short
+            # Binary variables for complementarity (MIP)
+            z = cp.Variable((N, 1), boolean=True)
+        else:
+            w = cp.Variable((N, 1))
+
+        k = cp.Variable((1, 1))
         rf0 = rf
         gr = cp.Variable((T, 1))
 
@@ -2450,12 +2457,13 @@ class Portfolio(object):
 
         if obj == "Sharpe":
             if self.budgetcap is not None and self.sht == True:
-                # Gross exposure EQUALITY using auxiliary variables for absolute value
-                # w_abs[i] >= |w[i]| enforced via w_abs >= w and w_abs >= -w
+                # Gross exposure EQUALITY using split variables with MIP complementarity
+                # z[i]=1 forces w_short[i]=0, z[i]=0 forces w_long[i]=0
+                M = self.budgetcap * 100  # Big-M constant (conservative upper bound)
                 constraints += [
-                    w_abs >= w,
-                    w_abs >= -w,
-                    cp.sum(w_abs) == self.budgetcap * k,
+                    w_long <= M * z,
+                    w_short <= M * (1 - z),
+                    cp.sum(w_long) + cp.sum(w_short) == self.budgetcap * k,
                     k * 1000 >= 0
                 ]
             else:
@@ -2477,12 +2485,7 @@ class Portfolio(object):
                         cp.sum(cp.pos(w)) * 1000 <= (self.budget + self.uppersht) * k * 1000,
                         cp.sum(cp.neg(w)) * 1000 <= self.budgetsht * k * 1000,
                     ]
-                else:
-                    # With budgetcap: add per-side limits to tighten LP relaxation
-                    constraints += [
-                        cp.sum(cp.pos(w)) * 1000 <= self.budgetcap * k * 1000,
-                        cp.sum(cp.neg(w)) * 1000 <= self.budgetcap * k * 1000,
-                    ]
+                # Note: With budgetcap, per-side limits handled by MIP complementarity
                 if flag_int:
                     constraints += [
                         e1 <= k,
@@ -2494,12 +2497,13 @@ class Portfolio(object):
                     ]
         else:
             if self.budgetcap is not None and self.sht == True:
-                # Gross exposure EQUALITY using auxiliary variables for absolute value
-                # w_abs[i] >= |w[i]| enforced via w_abs >= w and w_abs >= -w
+                # Gross exposure EQUALITY using split variables with MIP complementarity
+                # z[i]=1 forces w_short[i]=0, z[i]=0 forces w_long[i]=0
+                M = self.budgetcap * 100  # Big-M constant (conservative upper bound)
                 constraints += [
-                    w_abs >= w,
-                    w_abs >= -w,
-                    cp.sum(w_abs) == self.budgetcap
+                    w_long <= M * z,
+                    w_short <= M * (1 - z),
+                    cp.sum(w_long) + cp.sum(w_short) == self.budgetcap
                 ]
             else:
                 constraints += [cp.sum(w) == self.budget]
@@ -2993,7 +2997,14 @@ class Portfolio(object):
 
         try:
             prob = cp.Problem(objective, constraints)
-            for solver in self.solvers:
+
+            # Use MIP solver when budgetcap is set (requires integer variables)
+            # SCIP supports MIQCP (Mixed-Integer Quadratic/Conic Programming)
+            solvers_to_try = self.solvers
+            if self.budgetcap is not None and self.sht == True:
+                solvers_to_try = ["SCIP"] + self.solvers
+
+            for solver in solvers_to_try:
                 try:
                     if len(self.sol_params) == 0:
                         prob.solve(solver=solver)
@@ -3887,7 +3898,14 @@ class Portfolio(object):
 
         try:
             prob = cp.Problem(objective, constraints)
-            for solver in self.solvers:
+
+            # Use MIP solver when budgetcap is set (requires integer variables)
+            # SCIP supports MIQCP (Mixed-Integer Quadratic/Conic Programming)
+            solvers_to_try = self.solvers
+            if self.budgetcap is not None and self.sht == True:
+                solvers_to_try = ["SCIP"] + self.solvers
+
+            for solver in solvers_to_try:
                 try:
                     if len(self.sol_params) == 0:
                         prob.solve(solver=solver)
@@ -4037,11 +4055,16 @@ class Portfolio(object):
             rb = self.b
 
         returns = np.array(returns, ndmin=2)
-        w = cp.Variable((mu.shape[1], 1))
 
-        # Auxiliary variables for gross exposure (absolute value) constraint
+        # Split variable formulation for budgetcap equality constraint
         if self.budgetcap is not None and self.sht == True:
-            w_abs = cp.Variable((mu.shape[1], 1), nonneg=True)  # w_abs[i] >= |w[i]|
+            w_long = cp.Variable((mu.shape[1], 1), nonneg=True)
+            w_short = cp.Variable((mu.shape[1], 1), nonneg=True)
+            w = w_long - w_short
+            # Binary variables for complementarity (MIP)
+            z = cp.Variable((mu.shape[1], 1), boolean=True)
+        else:
+            w = cp.Variable((mu.shape[1], 1))
 
         ret = mu @ w
 
@@ -4122,7 +4145,14 @@ class Portfolio(object):
 
         try:
             prob = cp.Problem(objective, constraints)
-            for solver in self.solvers:
+
+            # Use MIP solver when budgetcap is set (requires integer variables)
+            # SCIP supports MIQCP (Mixed-Integer Quadratic/Conic Programming)
+            solvers_to_try = self.solvers
+            if self.budgetcap is not None and self.sht == True:
+                solvers_to_try = ["SCIP"] + self.solvers
+
+            for solver in solvers_to_try:
                 try:
                     if len(self.sol_params) == 0:
                         prob.solve(solver=solver)
@@ -4213,11 +4243,16 @@ class Portfolio(object):
         k_sigma = self.k_sigma
 
         T, N = returns.shape
-        w = cp.Variable((N, 1))
 
-        # Auxiliary variables for gross exposure (absolute value) constraint
+        # Split variable formulation for budgetcap equality constraint
         if self.budgetcap is not None and self.sht == True:
-            w_abs = cp.Variable((N, 1), nonneg=True)  # w_abs[i] >= |w[i]|
+            w_long = cp.Variable((N, 1), nonneg=True)
+            w_short = cp.Variable((N, 1), nonneg=True)
+            w = w_long - w_short
+            # Binary variables for complementarity (MIP)
+            z = cp.Variable((N, 1), boolean=True)
+        else:
+            w = cp.Variable((N, 1))
 
         Au = cp.Variable((N, N), symmetric=True)
         Al = cp.Variable((N, N), symmetric=True)
@@ -4305,12 +4340,13 @@ class Portfolio(object):
 
         if obj == "Sharpe":
             if self.budgetcap is not None and self.sht == True:
-                # Gross exposure EQUALITY using auxiliary variables for absolute value
-                # w_abs[i] >= |w[i]| enforced via w_abs >= w and w_abs >= -w
+                # Gross exposure EQUALITY using split variables with MIP complementarity
+                # z[i]=1 forces w_short[i]=0, z[i]=0 forces w_long[i]=0
+                M = self.budgetcap * 100  # Big-M constant (conservative upper bound)
                 constraints += [
-                    w_abs >= w,
-                    w_abs >= -w,
-                    cp.sum(w_abs) == self.budgetcap * k,
+                    w_long <= M * z,
+                    w_short <= M * (1 - z),
+                    cp.sum(w_long) + cp.sum(w_short) == self.budgetcap * k,
                     k * 1000 >= 0
                 ]
             else:
@@ -4332,12 +4368,7 @@ class Portfolio(object):
                         cp.sum(cp.pos(w)) * 1000 <= (self.budget + self.uppersht) * k * 1000,
                         cp.sum(cp.neg(w)) * 1000 <= self.budgetsht * k * 1000,
                     ]
-                else:
-                    # With budgetcap: add per-side limits to tighten LP relaxation
-                    constraints += [
-                        cp.sum(cp.pos(w)) * 1000 <= self.budgetcap * k * 1000,
-                        cp.sum(cp.neg(w)) * 1000 <= self.budgetcap * k * 1000,
-                    ]
+                # Note: With budgetcap, per-side limits handled by MIP complementarity
                 if flag_int:
                     constraints += [
                         e1 <= k,
@@ -4349,12 +4380,13 @@ class Portfolio(object):
                     ]
         else:
             if self.budgetcap is not None and self.sht == True:
-                # Gross exposure EQUALITY using auxiliary variables for absolute value
-                # w_abs[i] >= |w[i]| enforced via w_abs >= w and w_abs >= -w
+                # Gross exposure EQUALITY using split variables with MIP complementarity
+                # z[i]=1 forces w_short[i]=0, z[i]=0 forces w_long[i]=0
+                M = self.budgetcap * 100  # Big-M constant (conservative upper bound)
                 constraints += [
-                    w_abs >= w,
-                    w_abs >= -w,
-                    cp.sum(w_abs) == self.budgetcap
+                    w_long <= M * z,
+                    w_short <= M * (1 - z),
+                    cp.sum(w_long) + cp.sum(w_short) == self.budgetcap
                 ]
             else:
                 constraints += [cp.sum(w) == self.budget]
@@ -4490,7 +4522,14 @@ class Portfolio(object):
 
         try:
             prob = cp.Problem(objective, constraints)
-            for solver in self.solvers:
+
+            # Use MIP solver when budgetcap is set (requires integer variables)
+            # SCIP supports MIQCP (Mixed-Integer Quadratic/Conic Programming)
+            solvers_to_try = self.solvers
+            if self.budgetcap is not None and self.sht == True:
+                solvers_to_try = ["SCIP"] + self.solvers
+
+            for solver in solvers_to_try:
                 try:
                     if len(self.sol_params) == 0:
                         prob.solve(solver=solver)
@@ -4689,12 +4728,13 @@ class Portfolio(object):
 
         if obj == "Sharpe":
             if self.budgetcap is not None and self.sht == True:
-                # Gross exposure EQUALITY using auxiliary variables for absolute value
-                # w_abs[i] >= |w[i]| enforced via w_abs >= w and w_abs >= -w
+                # Gross exposure EQUALITY using split variables with MIP complementarity
+                # z[i]=1 forces w_short[i]=0, z[i]=0 forces w_long[i]=0
+                M = self.budgetcap * 100  # Big-M constant (conservative upper bound)
                 constraints += [
-                    w_abs >= w,
-                    w_abs >= -w,
-                    cp.sum(w_abs) == self.budgetcap * k,
+                    w_long <= M * z,
+                    w_short <= M * (1 - z),
+                    cp.sum(w_long) + cp.sum(w_short) == self.budgetcap * k,
                     k * 1000 >= 0
                 ]
             else:
@@ -4709,12 +4749,13 @@ class Portfolio(object):
                 ]
         else:
             if self.budgetcap is not None and self.sht == True:
-                # Gross exposure EQUALITY using auxiliary variables for absolute value
-                # w_abs[i] >= |w[i]| enforced via w_abs >= w and w_abs >= -w
+                # Gross exposure EQUALITY using split variables with MIP complementarity
+                # z[i]=1 forces w_short[i]=0, z[i]=0 forces w_long[i]=0
+                M = self.budgetcap * 100  # Big-M constant (conservative upper bound)
                 constraints += [
-                    w_abs >= w,
-                    w_abs >= -w,
-                    cp.sum(w_abs) == self.budgetcap
+                    w_long <= M * z,
+                    w_short <= M * (1 - z),
+                    cp.sum(w_long) + cp.sum(w_short) == self.budgetcap
                 ]
             else:
                 constraints += [cp.sum(w) == self.budget]
@@ -4857,7 +4898,14 @@ class Portfolio(object):
 
         try:
             prob = cp.Problem(objective, constraints)
-            for solver in self.solvers:
+
+            # Use MIP solver when budgetcap is set (requires integer variables)
+            # SCIP supports MIQCP (Mixed-Integer Quadratic/Conic Programming)
+            solvers_to_try = self.solvers
+            if self.budgetcap is not None and self.sht == True:
+                solvers_to_try = ["SCIP"] + self.solvers
+
+            for solver in solvers_to_try:
                 try:
                     if len(self.sol_params) == 0:
                         prob.solve(solver=solver)
@@ -4947,11 +4995,16 @@ class Portfolio(object):
         mu = self.mu.to_numpy()
         sigma = self.cov.to_numpy()
         returns = self.returns.to_numpy()
-        w = cp.Variable((mu.shape[1], 1))
 
-        # Auxiliary variables for gross exposure (absolute value) constraint
+        # Split variable formulation for budgetcap equality constraint
         if self.budgetcap is not None and self.sht == True:
-            w_abs = cp.Variable((mu.shape[1], 1), nonneg=True)  # w_abs[i] >= |w[i]|
+            w_long = cp.Variable((mu.shape[1], 1), nonneg=True)
+            w_short = cp.Variable((mu.shape[1], 1), nonneg=True)
+            w = w_long - w_short
+            # Binary variables for complementarity (MIP)
+            z = cp.Variable((mu.shape[1], 1), boolean=True)
+        else:
+            w = cp.Variable((mu.shape[1], 1))
 
         k = cp.Variable((1, 1))
         rf0 = rf
@@ -5031,12 +5084,13 @@ class Portfolio(object):
 
         if obj == "Sharpe":
             if self.budgetcap is not None and self.sht == True:
-                # Gross exposure EQUALITY using auxiliary variables for absolute value
-                # w_abs[i] >= |w[i]| enforced via w_abs >= w and w_abs >= -w
+                # Gross exposure EQUALITY using split variables with MIP complementarity
+                # z[i]=1 forces w_short[i]=0, z[i]=0 forces w_long[i]=0
+                M = self.budgetcap * 100  # Big-M constant (conservative upper bound)
                 constraints += [
-                    w_abs >= w,
-                    w_abs >= -w,
-                    cp.sum(w_abs) == self.budgetcap * k,
+                    w_long <= M * z,
+                    w_short <= M * (1 - z),
+                    cp.sum(w_long) + cp.sum(w_short) == self.budgetcap * k,
                     k * 1000 >= 0
                 ]
             else:
@@ -5058,12 +5112,7 @@ class Portfolio(object):
                         cp.sum(cp.pos(w)) * 1000 <= (self.budget + self.uppersht) * k * 1000,
                         cp.sum(cp.neg(w)) * 1000 <= self.budgetsht * k * 1000,
                     ]
-                else:
-                    # With budgetcap: add per-side limits to tighten LP relaxation
-                    constraints += [
-                        cp.sum(cp.pos(w)) * 1000 <= self.budgetcap * k * 1000,
-                        cp.sum(cp.neg(w)) * 1000 <= self.budgetcap * k * 1000,
-                    ]
+                # Note: With budgetcap, per-side limits handled by MIP complementarity
                 if flag_int:
                     constraints += [
                         e1 <= k,
@@ -5075,12 +5124,13 @@ class Portfolio(object):
                     ]
         else:
             if self.budgetcap is not None and self.sht == True:
-                # Gross exposure EQUALITY using auxiliary variables for absolute value
-                # w_abs[i] >= |w[i]| enforced via w_abs >= w and w_abs >= -w
+                # Gross exposure EQUALITY using split variables with MIP complementarity
+                # z[i]=1 forces w_short[i]=0, z[i]=0 forces w_long[i]=0
+                M = self.budgetcap * 100  # Big-M constant (conservative upper bound)
                 constraints += [
-                    w_abs >= w,
-                    w_abs >= -w,
-                    cp.sum(w_abs) == self.budgetcap
+                    w_long <= M * z,
+                    w_short <= M * (1 - z),
+                    cp.sum(w_long) + cp.sum(w_short) == self.budgetcap
                 ]
             else:
                 constraints += [cp.sum(w) == self.budget]
@@ -5243,7 +5293,14 @@ class Portfolio(object):
 
         try:
             prob = cp.Problem(objective, constraints)
-            for solver in self.solvers:
+
+            # Use MIP solver when budgetcap is set (requires integer variables)
+            # SCIP supports MIQCP (Mixed-Integer Quadratic/Conic Programming)
+            solvers_to_try = self.solvers
+            if self.budgetcap is not None and self.sht == True:
+                solvers_to_try = ["SCIP"] + self.solvers
+
+            for solver in solvers_to_try:
                 try:
                     if len(self.sol_params) == 0:
                         prob.solve(solver=solver)
