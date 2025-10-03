@@ -5,6 +5,7 @@ __pycache__/
 /riskfolio/src/__pycache__
 /riskfolio/external/__pycache__
 /riskfolio/external/cppfunctions.cpython-39-darwin.so
+/riskfolio/external/functions.cpython-313-aarch64-linux-gnu.so
 /dist
 /build
 /Riskfolio_Lib.egg-info

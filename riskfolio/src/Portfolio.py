@@ -80,6 +80,12 @@ class Portfolio(object):
     budgetsht : float, optional
         Indicate the maximum value of the sum of absolute value of short
         positions (negative weights). The default is 0.2.
+    budgetcap : float, optional
+        Maximum gross exposure (sum of absolute values of all positions).
+        When set with sht=True, constrains gross exposure (longs + shorts) to
+        not exceed budgetcap, while net exposure becomes free for the optimizer
+        to determine. Note: Due to DCP constraints in CVXPY, this is an upper
+        bound (<=), not an equality constraint. The default is None.
     nea : int, optional
         Indicate the minimum number of effective assets (NEA) used in
         portfolio. This value is the inverse of Herfindahl-Hirschman index of
@@ -264,6 +270,7 @@ class Portfolio(object):
         upperlng=1,
         budget=1,
         budgetsht=0.2,
+        budgetcap=None,
         nea=None,
         card=None,
         factors=None,
@@ -335,6 +342,7 @@ class Portfolio(object):
         self.upperlng = upperlng
         self.budget = budget
         self.budgetsht = budgetsht
+        self.budgetcap = budgetcap
         self.nea = nea
         self.card = card
         self._factors = factors
@@ -2436,7 +2444,15 @@ class Portfolio(object):
         # Problem Weight Constraints
 
         if obj == "Sharpe":
-            constraints += [cp.sum(w) == self.budget * k, k * 1000 >= 0]
+            if self.budgetcap is not None and self.sht == True:
+                # Gross exposure upper bound, net exposure free
+                # Note: Equality not possible due to DCP constraints (cp.pos/cp.neg are convex)
+                constraints += [
+                    (cp.sum(cp.pos(w)) + cp.sum(cp.neg(w))) * 1000 <= self.budgetcap * k * 1000,
+                    k * 1000 >= 0
+                ]
+            else:
+                constraints += [cp.sum(w) == self.budget * k, k * 1000 >= 0]
             if self.sht == False:
                 constraints += [w <= self.upperlng * k, w * 1000 >= 0]
                 if flag_int:
@@ -2448,10 +2464,12 @@ class Portfolio(object):
                         w <= self.upperlng * e1,
                     ]
             elif self.sht == True:
+                # Use budgetcap for per-side limits when set, otherwise use budget parameters
+                long_limit = self.budgetcap if self.budgetcap is not None else (self.budget + self.uppersht)
+                short_limit = self.budgetcap if self.budgetcap is not None else self.budgetsht
                 constraints += [
-                    cp.sum(cp.pos(w)) * 1000
-                    <= (self.budget + self.uppersht) * k * 1000,
-                    cp.sum(cp.neg(w)) * 1000 <= self.budgetsht * k * 1000,
+                    cp.sum(cp.pos(w)) * 1000 <= long_limit * k * 1000,
+                    cp.sum(cp.neg(w)) * 1000 <= short_limit * k * 1000,
                 ]
                 if flag_int:
                     constraints += [
@@ -2463,7 +2481,14 @@ class Portfolio(object):
                         w <= min(self.upperlng, (self.budget + self.budgetsht)) * e1,
                     ]
         else:
-            constraints += [cp.sum(w) == self.budget]
+            if self.budgetcap is not None and self.sht == True:
+                # Gross exposure upper bound, net exposure free
+                # Note: Equality not possible due to DCP constraints (cp.pos/cp.neg are convex)
+                constraints += [
+                    (cp.sum(cp.pos(w)) + cp.sum(cp.neg(w))) * 1000 <= self.budgetcap * 1000
+                ]
+            else:
+                constraints += [cp.sum(w) == self.budget]
             if self.sht == False:
                 constraints += [w <= self.upperlng, w * 1000 >= 0]
                 if flag_int:
@@ -2472,9 +2497,12 @@ class Portfolio(object):
                     ]
 
             elif self.sht == True:
+                # Use budgetcap for per-side limits when set, otherwise use budget parameters
+                long_limit = self.budgetcap if self.budgetcap is not None else (self.budget + self.uppersht)
+                short_limit = self.budgetcap if self.budgetcap is not None else self.budgetsht
                 constraints += [
-                    cp.sum(cp.pos(w)) * 1000 <= (self.budget + self.uppersht) * 1000,
-                    cp.sum(cp.neg(w)) * 1000 <= self.budgetsht * 1000,
+                    cp.sum(cp.pos(w)) * 1000 <= long_limit * 1000,
+                    cp.sum(cp.neg(w)) * 1000 <= short_limit * 1000,
                 ]
                 if flag_int:
                     constraints += [
@@ -4247,7 +4275,15 @@ class Portfolio(object):
         # Problem Weight Constraints
 
         if obj == "Sharpe":
-            constraints += [cp.sum(w) == self.budget * k, k * 1000 >= 0]
+            if self.budgetcap is not None and self.sht == True:
+                # Gross exposure upper bound, net exposure free
+                # Note: Equality not possible due to DCP constraints (cp.pos/cp.neg are convex)
+                constraints += [
+                    (cp.sum(cp.pos(w)) + cp.sum(cp.neg(w))) * 1000 <= self.budgetcap * k * 1000,
+                    k * 1000 >= 0
+                ]
+            else:
+                constraints += [cp.sum(w) == self.budget * k, k * 1000 >= 0]
             if self.sht == False:
                 constraints += [w <= self.upperlng * k, w * 1000 >= 0]
                 if flag_int:
@@ -4259,12 +4295,13 @@ class Portfolio(object):
                         w <= self.upperlng * e1,
                     ]
             elif self.sht == True:
+                # Use budgetcap for per-side limits when set, otherwise use budget parameters
+                long_limit = self.budgetcap if self.budgetcap is not None else (self.budget + self.uppersht)
+                short_limit = self.budgetcap if self.budgetcap is not None else self.budgetsht
                 constraints += [
-                    cp.sum(cp.pos(w)) * 1000
-                    <= (self.budget + self.uppersht) * k * 1000,
-                    cp.sum(cp.neg(w)) * 1000 <= self.budgetsht * k * 1000,
+                    cp.sum(cp.pos(w)) * 1000 <= long_limit * k * 1000,
+                    cp.sum(cp.neg(w)) * 1000 <= short_limit * k * 1000,
                 ]
-
                 if flag_int:
                     constraints += [
                         e1 <= k,
@@ -4275,7 +4312,14 @@ class Portfolio(object):
                         w <= min(self.upperlng, (self.budget + self.budgetsht)) * e1,
                     ]
         else:
-            constraints += [cp.sum(w) == self.budget]
+            if self.budgetcap is not None and self.sht == True:
+                # Gross exposure upper bound, net exposure free
+                # Note: Equality not possible due to DCP constraints (cp.pos/cp.neg are convex)
+                constraints += [
+                    (cp.sum(cp.pos(w)) + cp.sum(cp.neg(w))) * 1000 <= self.budgetcap * 1000
+                ]
+            else:
+                constraints += [cp.sum(w) == self.budget]
             if self.sht == False:
                 constraints += [w <= self.upperlng, w * 1000 >= 0]
                 if flag_int:
@@ -4283,9 +4327,12 @@ class Portfolio(object):
                         w <= self.upperlng * e,
                     ]
             elif self.sht == True:
+                # Use budgetcap for per-side limits when set, otherwise use budget parameters
+                long_limit = self.budgetcap if self.budgetcap is not None else (self.budget + self.uppersht)
+                short_limit = self.budgetcap if self.budgetcap is not None else self.budgetsht
                 constraints += [
-                    cp.sum(cp.pos(w)) * 1000 <= (self.budget + self.uppersht) * 1000,
-                    cp.sum(cp.neg(w)) * 1000 <= self.budgetsht * 1000,
+                    cp.sum(cp.pos(w)) * 1000 <= long_limit * 1000,
+                    cp.sum(cp.neg(w)) * 1000 <= short_limit * 1000,
                 ]
                 if flag_int:
                     constraints += [
@@ -4598,7 +4645,15 @@ class Portfolio(object):
         # Problem Weight Constraints
 
         if obj == "Sharpe":
-            constraints += [cp.sum(w) == self.budget * k, k * 1000 >= 0]
+            if self.budgetcap is not None and self.sht == True:
+                # Gross exposure upper bound, net exposure free
+                # Note: Equality not possible due to DCP constraints (cp.pos/cp.neg are convex)
+                constraints += [
+                    (cp.sum(cp.pos(w)) + cp.sum(cp.neg(w))) * 1000 <= self.budgetcap * k * 1000,
+                    k * 1000 >= 0
+                ]
+            else:
+                constraints += [cp.sum(w) == self.budget * k, k * 1000 >= 0]
             if self.sht == False:
                 constraints += [w <= self.upperlng * k, w * 1000 >= 0]
             elif self.sht == True:
@@ -4608,7 +4663,14 @@ class Portfolio(object):
                     cp.sum(cp.neg(w)) * 1000 <= self.budgetsht * k * 1000,
                 ]
         else:
-            constraints += [cp.sum(w) == self.budget]
+            if self.budgetcap is not None and self.sht == True:
+                # Gross exposure upper bound, net exposure free
+                # Note: Equality not possible due to DCP constraints (cp.pos/cp.neg are convex)
+                constraints += [
+                    (cp.sum(cp.pos(w)) + cp.sum(cp.neg(w))) * 1000 <= self.budgetcap * 1000
+                ]
+            else:
+                constraints += [cp.sum(w) == self.budget]
             if self.sht == False:
                 constraints += [w <= self.upperlng, w * 1000 >= 0]
             elif self.sht == True:
@@ -4916,7 +4978,15 @@ class Portfolio(object):
         # Problem Weight Constraints
 
         if obj == "Sharpe":
-            constraints += [cp.sum(w) == self.budget * k, k * 1000 >= 0]
+            if self.budgetcap is not None and self.sht == True:
+                # Gross exposure upper bound, net exposure free
+                # Note: Equality not possible due to DCP constraints (cp.pos/cp.neg are convex)
+                constraints += [
+                    (cp.sum(cp.pos(w)) + cp.sum(cp.neg(w))) * 1000 <= self.budgetcap * k * 1000,
+                    k * 1000 >= 0
+                ]
+            else:
+                constraints += [cp.sum(w) == self.budget * k, k * 1000 >= 0]
             if self.sht == False:
                 constraints += [w <= self.upperlng * k, w * 1000 >= 0]
                 if flag_int:
@@ -4928,10 +4998,12 @@ class Portfolio(object):
                         w <= self.upperlng * e1,
                     ]
             elif self.sht == True:
+                # Use budgetcap for per-side limits when set, otherwise use budget parameters
+                long_limit = self.budgetcap if self.budgetcap is not None else (self.budget + self.uppersht)
+                short_limit = self.budgetcap if self.budgetcap is not None else self.budgetsht
                 constraints += [
-                    cp.sum(cp.pos(w)) * 1000
-                    <= (self.budget + self.uppersht) * k * 1000,
-                    cp.sum(cp.neg(w)) * 1000 <= self.budgetsht * k * 1000,
+                    cp.sum(cp.pos(w)) * 1000 <= long_limit * k * 1000,
+                    cp.sum(cp.neg(w)) * 1000 <= short_limit * k * 1000,
                 ]
                 if flag_int:
                     constraints += [
@@ -4943,7 +5015,14 @@ class Portfolio(object):
                         w <= min(self.upperlng, (self.budget + self.budgetsht)) * e1,
                     ]
         else:
-            constraints += [cp.sum(w) == self.budget]
+            if self.budgetcap is not None and self.sht == True:
+                # Gross exposure upper bound, net exposure free
+                # Note: Equality not possible due to DCP constraints (cp.pos/cp.neg are convex)
+                constraints += [
+                    (cp.sum(cp.pos(w)) + cp.sum(cp.neg(w))) * 1000 <= self.budgetcap * 1000
+                ]
+            else:
+                constraints += [cp.sum(w) == self.budget]
             if self.sht == False:
                 constraints += [w <= self.upperlng, w * 1000 >= 0]
                 if flag_int:
@@ -4951,9 +5030,12 @@ class Portfolio(object):
                         w <= self.upperlng * e,
                     ]
             elif self.sht == True:
+                # Use budgetcap for per-side limits when set, otherwise use budget parameters
+                long_limit = self.budgetcap if self.budgetcap is not None else (self.budget + self.uppersht)
+                short_limit = self.budgetcap if self.budgetcap is not None else self.budgetsht
                 constraints += [
-                    cp.sum(cp.pos(w)) * 1000 <= (self.budget + self.uppersht) * 1000,
-                    cp.sum(cp.neg(w)) * 1000 <= self.budgetsht * 1000,
+                    cp.sum(cp.pos(w)) * 1000 <= long_limit * 1000,
+                    cp.sum(cp.neg(w)) * 1000 <= short_limit * 1000,
                 ]
                 if flag_int:
                     constraints += [
@@ -5631,6 +5713,7 @@ class Portfolio(object):
         self.upperlng = 1
         self.budget = 1
         self.budgetsh = 0.2
+        self.budgetcap = None
         self.nea = None
         self.card = None
         self._factors = None
