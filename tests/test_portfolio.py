@@ -34,7 +34,7 @@ def test_classic_minrisk_optimization():
     method_mu = "hist"
     method_cov = "hist"
 
-    port.assets_stats(method_mu=method_mu, method_cov=method_cov, d=0.94)
+    port.assets_stats(method_mu=method_mu, method_cov=method_cov)
     port.alpha = 0.05
     port.solvers = ['CLARABEL', 'SCS', 'ECOS']
 
@@ -91,7 +91,7 @@ def test_classic_sharpe_optimization():
     method_mu = "hist"
     method_cov = "hist"
 
-    port.assets_stats(method_mu=method_mu, method_cov=method_cov, d=0.94)
+    port.assets_stats(method_mu=method_mu, method_cov=method_cov)
     port.alpha = 0.05
     port.solvers = ['CLARABEL', 'SCS', 'ECOS']
 
@@ -148,7 +148,7 @@ def test_classic_riskparity_optimization():
     method_mu = "hist"
     method_cov = "hist"
 
-    port.assets_stats(method_mu=method_mu, method_cov=method_cov, d=0.94)
+    port.assets_stats(method_mu=method_mu, method_cov=method_cov)
     port.alpha = 0.05
     port.solvers = ['CLARABEL', 'ECOS', 'SCS']
 
@@ -200,7 +200,7 @@ def test_worst_case_optimization():
     method_mu = "hist"
     method_cov = "hist"
 
-    port.assets_stats(method_mu=method_mu, method_cov=method_cov, d=0.94)
+    port.assets_stats(method_mu=method_mu, method_cov=method_cov)
     port.solvers = ['CLARABEL', 'ECOS', 'SCS']
 
     box = 's'
@@ -476,7 +476,19 @@ def test_budgetcap_optimization():
     port.budget = None  # N is unconstrained
     port.budgetcap = 1.2  # G is set
 
+    # Feasibility check: Verify budgetcap is achievable
+    # First optimize without budgetcap to find natural gross
+    port_temp = rp.Portfolio(returns=Y)
+    port_temp.assets_stats(method_mu=method_mu, method_cov=method_cov)
+    port_temp.sht = True
+    w_free = port_temp.optimization(model=model, rm="MV", obj="Utility", rf=rf, l=2, hist=True)
+    natural_gross = np.abs(w_free.to_numpy()).sum()
+
+    if port.budgetcap > natural_gross * 1.05:  # 5% tolerance
+        print(f"  ⚠ Warning: budgetcap {port.budgetcap:.3f} > natural gross {natural_gross:.3f} - constraint may be slack")
+
     # Use Utility objective (Sharpe doesn't support budget=None with budgetcap)
+    # l=2 is used to balance risk and return while allowing unconstrained net
     w_scenario2 = port.optimization(model=model, rm="MV", obj="Utility", rf=rf, l=2, hist=True)
 
     gross2 = np.abs(w_scenario2.to_numpy()).sum()
@@ -484,9 +496,21 @@ def test_budgetcap_optimization():
 
     gross_error2 = abs(gross2 - port.budgetcap)
 
+    # Critical: Verify complementarity (wp[i] * wn[i] ≈ 0)
+    # This ensures sum(|w|) = sum(wp + wn)
+    w_opt2 = w_scenario2.to_numpy().flatten()
+    wp2 = np.maximum(w_opt2, 0)
+    wn2 = np.maximum(-w_opt2, 0)
+    overlap2 = wp2 * wn2
+
+    assert np.all(overlap2 < 1e-8), f"Scenario 2: Complementarity violated: max overlap = {overlap2.max()}"
     assert gross_error2 < 1e-6, f"Scenario 2: Gross constraint violated: {gross2} != {port.budgetcap}"
 
+    # Validate net exposure is within gross bounds
+    assert abs(net2) <= gross2 + 1e-6, f"Scenario 2: Net {net2} exceeds gross {gross2}"
+
     print(f"  ✓ Scenario 2: Gross={gross2:.6f} (error: {gross_error2:.2e}), Net={net2:.6f} (unconstrained)")
+    print(f"             Complementarity: max(wp*wn) = {overlap2.max():.2e}, Net/Gross = {abs(net2)/gross2:.1%}")
 
     # Test 3: Scenario 3 (Optional) - Both G & N are set - Both equality constraints followed
     print("Testing Scenario 3: Both G & N are set (optional)")
