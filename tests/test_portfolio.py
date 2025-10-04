@@ -72,7 +72,7 @@ def test_classic_minrisk_optimization():
         w_1 = pd.concat([w_1, w], axis=1)
 
     w_1.columns = rms
-    # w_1.to_csv("Classic_MinRisk.csv")
+    # w_1.to_csv(resource("Classic_MinRisk.csv"))
 
     w_2 = get_data("Classic_MinRisk.csv")
 
@@ -129,7 +129,7 @@ def test_classic_sharpe_optimization():
         w_1 = pd.concat([w_1, w], axis=1)
 
     w_1.columns = rms
-    # w_1.to_csv("Classic_Sharpe.csv")
+    # w_1.to_csv(resource("Classic_Sharpe.csv"))
 
     w_2 = get_data("Classic_Sharpe.csv")
 
@@ -181,7 +181,7 @@ def test_classic_riskparity_optimization():
         w_1 = pd.concat([w_1, w], axis=1)
 
     w_1.columns = rms
-    # w_1.to_csv("Classic_RP.csv")
+    # w_1.to_csv(resource("Classic_RP.csv"))
 
     w_2 = get_data("Classic_RP.csv")
 
@@ -230,7 +230,7 @@ def test_worst_case_optimization():
                 headers += [obj + '-' + Umu + '-' + Ucov]
 
     w_1.columns = headers
-    # w_1.to_csv("Classic_WC.csv")
+    # w_1.to_csv(resource("Classic_WC.csv"))
 
     w_2 = get_data("Classic_WC.csv")
 
@@ -299,6 +299,7 @@ def test_hc_hrp_optimization():
         w_1 = pd.concat([w_1, w], axis=1)
 
     w_1.columns = rms
+    # w_1.to_csv(resource("HC_HRP.csv"))
 
     w_2 = get_data("HC_HRP.csv")
 
@@ -367,6 +368,7 @@ def test_hc_herc_optimization():
         w_1 = pd.concat([w_1, w], axis=1)
 
     w_1.columns = rms
+    # w_1.to_csv(resource("HC_HERC.csv"))
 
     w_2 = get_data("HC_HERC.csv")
 
@@ -384,7 +386,7 @@ def test_hc_nco_optimization():
 
     model = "NCO"
     codependence = "pearson"
-    covariance = "hist"
+    method_cov = "hist"
     obj = "MinRisk"
     rf = 0
     linkage = "ward"
@@ -413,7 +415,7 @@ def test_hc_nco_optimization():
         w = port.optimization(
             model=model,
             codependence=codependence,
-            covariance=covariance,
+            method_cov=method_cov,
             obj=obj,
             rm=i,
             rf=rf,
@@ -425,6 +427,7 @@ def test_hc_nco_optimization():
         w_1 = pd.concat([w_1, w], axis=1)
 
     w_1.columns = rms
+    # w_1.to_csv(resource("HC_NCO.csv"))
 
     w_2 = get_data("HC_NCO.csv")
 
