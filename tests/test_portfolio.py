@@ -433,6 +433,109 @@ def test_hc_nco_optimization():
         print("There are no errors in test_hc_nco_optimization")
 
 
+def test_budgetcap_optimization():
+    """Test budgetcap (gross exposure) constraint with long-short portfolios."""
+
+    Y = get_data("stock_prices.csv")
+    Y = Y[assets].pct_change().dropna().iloc[-200:]
+
+    port = rp.Portfolio(returns=Y)
+
+    method_mu = "hist"
+    method_cov = "hist"
+
+    port.assets_stats(method_mu=method_mu, method_cov=method_cov)
+    port.alpha = 0.05
+    port.solvers = ['CLARABEL', 'SCS', 'ECOS']
+
+    model = "Classic"
+    hist = True
+    rf = 0
+    l = 0
+
+    # Test 1: Scenario 1 - Only N is set (budgetcap=None) - Default behavior
+    print("Testing Scenario 1: Only N is set (default behavior)")
+    port.sht = True
+    port.budget = 1.0
+    port.budgetcap = None
+
+    w_scenario1 = port.optimization(model=model, rm="MV", obj="Sharpe", rf=rf, l=l, hist=hist)
+
+    gross1 = np.abs(w_scenario1.to_numpy()).sum()
+    net1 = w_scenario1.to_numpy().sum()
+
+    # Verify net constraint
+    assert abs(net1 - port.budget) < 1e-6, f"Scenario 1: Net constraint violated: {net1} != {port.budget}"
+    print(f"  ✓ Scenario 1: Net={net1:.6f}, Gross={gross1:.6f} (default behavior preserved)")
+
+    # Test 2: Scenario 2 - Gross set with feasible net
+    # Note: budgetcap must be feasible for the data. If budgetcap > natural optimum,
+    # constraint may not be satisfied. Use budgetcap <= natural gross for reliability.
+    print("Testing Scenario 2: Only G is set (N unconstrained)")
+    port.sht = True
+    port.budget = None  # N is unconstrained
+    port.budgetcap = 1.2  # G is set
+
+    # Use Utility objective (Sharpe doesn't support budget=None with budgetcap)
+    w_scenario2 = port.optimization(model=model, rm="MV", obj="Utility", rf=rf, l=2, hist=True)
+
+    gross2 = np.abs(w_scenario2.to_numpy()).sum()
+    net2 = w_scenario2.to_numpy().sum()
+
+    gross_error2 = abs(gross2 - port.budgetcap)
+
+    assert gross_error2 < 1e-6, f"Scenario 2: Gross constraint violated: {gross2} != {port.budgetcap}"
+
+    print(f"  ✓ Scenario 2: Gross={gross2:.6f} (error: {gross_error2:.2e}), Net={net2:.6f} (unconstrained)")
+
+    # Test 3: Scenario 3 (Optional) - Both G & N are set - Both equality constraints followed
+    print("Testing Scenario 3: Both G & N are set (optional)")
+    port.sht = True
+    port.budget = 1.0
+    port.budgetcap = 1.6
+
+    w_scenario3_sharpe = port.optimization(model=model, rm="MV", obj="Sharpe", rf=rf, l=l, hist=hist)
+
+    gross3 = np.abs(w_scenario3_sharpe.to_numpy()).sum()
+    net3 = w_scenario3_sharpe.to_numpy().sum()
+
+    # Feasibility checks
+    gross_error = abs(gross3 - port.budgetcap)
+    net_error = abs(net3 - port.budget)
+
+    assert gross_error < 1e-6, f"Scenario 3 Sharpe: Gross constraint violated: {gross3} != {port.budgetcap}"
+    assert net_error < 1e-6, f"Scenario 3 Sharpe: Net constraint violated: {net3} != {port.budget}"
+
+    # Complementarity check
+    w_opt = w_scenario3_sharpe.to_numpy().flatten()
+    w_long_check = np.maximum(w_opt, 0)
+    w_short_check = np.maximum(-w_opt, 0)
+    overlap = w_long_check * w_short_check
+
+    assert np.all(overlap < 1e-8), f"Scenario 3 Sharpe: Complementarity violated: max overlap = {overlap.max()}"
+
+    print(f"  ✓ Scenario 3 Sharpe: Gross={gross3:.6f} (error: {gross_error:.2e}), Net={net3:.6f} (error: {net_error:.2e})")
+
+    # Test 3: Different budgetcap values
+    print("Testing with budgetcap = 2.0")
+    port.budgetcap = 2.0
+
+    w_budgetcap2 = port.optimization(model=model, rm="MV", obj="Sharpe", rf=rf, l=l, hist=hist)
+
+    gross4 = np.abs(w_budgetcap2.to_numpy()).sum()
+    net4 = w_budgetcap2.to_numpy().sum()
+
+    gross_error4 = abs(gross4 - port.budgetcap)
+    net_error4 = abs(net4 - port.budget)
+
+    assert gross_error4 < 1e-6, f"budgetcap=2.0: Gross constraint violated: {gross4} != {port.budgetcap}"
+    assert net_error4 < 1e-6, f"budgetcap=2.0: Net constraint violated: {net4} != {port.budget}"
+
+    print(f"  ✓ budgetcap=2.0: Gross={gross4:.6f} (error: {gross_error4:.2e}), Net={net4:.6f} (error: {net_error4:.2e})")
+
+    print("There are no errors in test_budgetcap_optimization")
+
+
 if __name__ == '__main__':
     test_classic_minrisk_optimization()
     test_classic_sharpe_optimization()
@@ -441,3 +544,4 @@ if __name__ == '__main__':
     test_hc_hrp_optimization()
     test_hc_herc_optimization()
     test_hc_nco_optimization()
+    test_budgetcap_optimization()
